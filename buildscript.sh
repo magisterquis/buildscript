@@ -1,5 +1,10 @@
 #!/bin/ksh
 
+# buildscript.sh
+# Script to automate building an OpenBSD release
+# Code heavily modified by J. Stuart McMurray
+# last modified 20141106
+
 ######################################################
 ###### BUILDS A FULL RELEASE IMAGE FOR OPENBSD #######
 ######################################################
