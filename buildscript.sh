@@ -135,6 +135,7 @@ if [[ -z $1 || $1 != "-r" ]]; then # Separate out the non-post-reboot code
         echo --make install-- $(date) >>${BUILDLOG}
         make install >>${BUILDLOG} 2>&1
         echo -n 'Finished: ' >>${BUILDLOG}
+        date >>${BUILDLOG}
 
         # Copy the build log out of the ramdisk
         cp ${BUILDLOG} /var/log
@@ -144,7 +145,6 @@ if [[ -z $1 || $1 != "-r" ]]; then # Separate out the non-post-reboot code
                 AFTERBOOTSCRIPT="$(readlink -f -- $0)"
         fi
         echo "$AFTERBOOTSCRIPT -r >/tmp/buildscript.out 2>/tmp/buildscript.err &" >> /etc/rc.firsttime
-        date >>${BUILDLOG}
 
         shutdown -r now "New kernel built, rebooting."
         exit # For just in case
