@@ -108,13 +108,13 @@ function rmdirsafe {
 # speed up the compile time by mitigating ufs slow IOs.
 # Be warned that data can be lost in case of a crash or 
 # power outage.  
-mkdir -p ${BUILDLOGDIR} /usr/obj
-if ! mount | grep "tmpfs on ${BUILDLOGDIR}" >/dev/null; then
-        mount -t tmpfs tmpfs ${BUILDLOGDIR}
-fi
-if ! mount | grep 'tmpfs on /usr/obj' >/dev/null; then
-        mount -t tmpfs tmpfs /usr/obj
-fi
+#mkdir -p ${BUILDLOGDIR} /usr/obj
+#if ! mount | grep "tmpfs on ${BUILDLOGDIR}" >/dev/null; then
+#        mount -t tmpfs tmpfs ${BUILDLOGDIR}
+#fi
+#if ! mount | grep 'tmpfs on /usr/obj' >/dev/null; then
+#        mount -t tmpfs tmpfs /usr/obj
+#fi
 
 
 #### 1. BUILD AND INSTALL A NEW KERNEL 
