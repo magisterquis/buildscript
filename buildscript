@@ -116,6 +116,9 @@ function rmdirsafe {
 #        mount -t tmpfs tmpfs /usr/obj
 #fi
 
+# Clear out old logfiles.  There shouldn't be any, unless the above section
+# were to be commented out.
+rm -f $(BUILDLOGDIR}/*
 
 #### 1. BUILD AND INSTALL A NEW KERNEL 
 ##############################################
