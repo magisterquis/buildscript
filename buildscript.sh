@@ -1,0 +1,334 @@
+#!/bin/ksh
+
+######################################################
+###### BUILDS A FULL RELEASE IMAGE FOR OPENBSD #######
+######################################################
+###   This script will build a fully patched ISO   ###
+###   with patched sets and patched source code.   ###
+###   The iso can be burned to a CD and used for   ###
+###   installing on other machines. All compiled   ###
+###   code is signed using OPENBSD's signify.      ###
+###                                                ### 
+###   By Erik Adler aka Onryo.                     ###
+###   GPG/PGP key ID: 0x2B4B58FE                   ###
+######################################################
+# BSD license                                        #
+# Copyright (c) 2014 ERIK ADLER erik.adler@mensa.se  #
+# aka Onryo                                          #
+# GPG/PGP key ID: 0x2B4B58FE                         #
+#                                                    #
+# Permission to use, copy, modify, and distribute    #
+# this software for any purpose with or without fee  #
+# is hereby granted, provided that the above         #
+# copyright notice and this permission notice appear #
+# in all copies.                                     #
+#                                                    #
+# THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR    #
+# DISCLAIMS ALL WARRANTIES WITH REGARD TO THIS       #
+# SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF       #
+# MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL     #
+# THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,      #
+# INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES  #
+# WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR     #
+# PROFITS, WHETHER IN AN ACTION OF CONTRACT,         #
+# NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT   #
+# OF OR IN CONNECTION WITH THE USE OR PERFORMANCE    #
+# OF THIS SOFTWARE.                                  #
+######################################################
+# Supports the following architectures as of 2014:   #   
+# alpha amd64 arm armish armv7 aviion hppa hppa64    #
+# i386 ia64 landisk loongson luna88k m88k macppc     #
+# mips64 octeon powerpc sgi sh socppc solbourne      # 
+# sparc sparc64 vax zaurus                           #
+######################################################
+
+set -e
+renice -n 19 $$ >/dev/null 2>&1
+
+# Uncomment one of the below to specify which kernel to use.  Leaving both
+# commented will cause the script to guess.
+#NAME=GENERIC.MP
+#NAME=GENERIC
+
+# Uncomment this to set a different script to run after boot.
+#AFTERBOOTSCRIPT="$(readlink -f -- $0) -r"
+
+# Uncomment this to set the number of CPU cores to use for building.  By
+# default, all the cores (hw.ncpufound) will be used for most of the building.
+#CORES=1
+
+# Directory to hold the logs after building
+BUILDLOGDIR=/var/log/buildlogs
+# Directory to contain the final # file sets, arranged similarly to the
+# OpenBSD CD.
+IMGROOT=/root/OpenBSD
+
+# Refuse to run unless we're root
+# Make sure only root can run our script
+if [ "$(id -u)" != "0" ]; then
+        echo "This script must be run as root" 1>&2
+        exit 1
+fi
+
+# Build the MP processor if we have more than one core
+_CORES=$(sysctl hw.ncpufound)
+_CORES=${_CORES#*=}
+if [[ -z ${NAME} ]]; then
+        if [[ ${_CORES} > 1 ]]; then
+                NAME=GENERIC.MP
+        else
+                NAME=GENERIC
+        fi
+fi
+
+# Work out how many cores to use for building.
+if [[ -z ${CORES} ]]; then
+        CORES=$_CORES
+fi
+
+# Architecture to build
+MACHINE=$(machine)
+
+# Remove a directory safely in the background and create it, whether it
+# exists or not.
+function rmdirsafe {
+        if [[ -d $1 ]]; then
+                mv $1 $1.old
+                rm -rf $1.old &                  
+        fi
+        mkdir -p $1
+}
+
+# Using the following ram tmpfs while building will 
+# speed up the compile time by mitigating ufs slow IOs.
+# Be warned that data can be lost in case of a crash or 
+# power outage.  
+mkdir -p ${BUILDLOGDIR} /usr/obj
+if ! mount | grep "tmpfs on ${BUILDLOGDIR}" >/dev/null; then
+        mount -t tmpfs tmpfs ${BUILDLOGDIR}
+fi
+if ! mount | grep 'tmpfs on /usr/obj' >/dev/null; then
+        mount -t tmpfs tmpfs /usr/obj
+fi
+
+
+#### 1. BUILD AND INSTALL A NEW KERNEL 
+##############################################
+# This will build a kernel for the architecture 
+# from above. MP is for multiprocessor.
+
+if [[ -z $1 || $1 != "-r" ]]; then # Separate out the non-post-reboot code
+
+        BUILDLOG=${BUILDLOGDIR}/logfile_1_build_kernel
+        echo -n 'Started: ' > ${BUILDLOG}
+        date >> ${BUILDLOG}
+
+        # Build the new kernel
+        cd /usr/src/sys/arch/${MACHINE}/conf 
+        echo --config ${NAME}-- $(date) >>${BUILDLOG}
+        config ${NAME} >>${BUILDLOG} 2>&1
+        cd /usr/src/sys/arch/${MACHINE}/compile/${NAME} 
+        echo --make clean-- $(date) >>${BUILDLOG}
+        make clean >>${BUILDLOG} 2>&1
+        echo --make -j ${CORES}-- $(date) >>${BUILDLOG}
+        make -j${CORES} >>${BUILDLOG} 2>&1
+        echo --make install-- $(date) >>${BUILDLOG}
+        make install >>${BUILDLOG} 2>&1
+        echo -n 'Finished: ' >>${BUILDLOG}
+
+        # Copy the build log out of the ramdisk
+        cp ${BUILDLOG} /var/log
+        
+        # Queue this script to run the rest after reboot
+        if [[ -z ${AFTERBOOTSCRIPT} ]]; then
+                AFTERBOOTSCRIPT="$(readlink -f -- $0)"
+        fi
+        echo "$AFTERBOOTSCRIPT -r >/tmp/buildscript.out 2>/tmp/buildscript.err &" >> /etc/rc.firsttime
+        date >>${BUILDLOG}
+
+        shutdown -r now "New kernel built, rebooting."
+        exit # For just in case
+fi
+# Retreive the kernel build logs after reboot
+mv /var/log/logfile_1_build_kernel ${BUILDLOGDIR}
+
+
+#### 2. BUILD AND INSTALL SYSTEM  
+##############################################
+# After this step we will now be running the
+# built system from this step. 
+
+BUILDLOG=${BUILDLOGDIR}/logfile_2_build_system
+echo -n 'Started: ' > ${BUILDLOG}
+date >> ${BUILDLOG}
+
+# Remove old object files
+rm -rf /usr/obj/*
+
+# Build the new userland
+cd /usr/src
+echo --make obj-- $(date) >>${BUILDLOG}
+make obj >>${BUILDLOG} 2>&1
+cd /usr/src/etc 
+echo env DESTDIR=/ make distrib-dirs-- $(date) >>${BUILDLOG}
+env DESTDIR=/ make distrib-dirs >>${BUILDLOG} 2>&1
+cd /usr/src >>${BUILDLOG} 2>&1
+echo --make -j${CORES} build-- $(date) >>${BUILDLOG}
+make -j${CORES} build >>${BUILDLOG} 2>&1
+echo -n 'Finished: ' >>${BUILDLOG}
+date >>${BUILDLOG}
+
+
+#### 3. MAKE THE SYSTEM RELEASE AND VALIDATE 
+##############################################
+# In the last step we built the system that is
+# now running. We now will build our release  
+# sets for system and put them in the RELEASEDIR. 
+# base55.tgz, comp55.tgz, etc55.tgz game55.tgz
+# man55.tgz 
+
+export DESTDIR=/root/dest
+export RELEASEDIR=/root/rel
+BUILDLOG=${BUILDLOGDIR}/logfile_3_sys_release
+echo -n 'Started: ' > ${BUILDLOG}
+date >> ${BUILDLOG}
+
+# Safely remove old $DESTDIR in the background, and make working directories
+rmdirsafe ${DESTDIR}
+mkdir -p ${DESTDIR} ${RELEASEDIR}   
+
+# Build the sets
+cd /usr/src/etc 
+echo --make -j${CORES} release-- $(date) >>${BUILDLOG}
+make -j${CORES} release >>${BUILDLOG} 2>&1
+cd /usr/src/distrib/sets 
+echo --checkflist-- $(date) >>${BUILDLOG}
+sh checkflist >>${BUILDLOG} 2>&1
+cd ${RELEASEDIR}
+mv SHA256 SHA256_temp
+echo -n 'Finished: ' >>${BUILDLOG}
+date >>${BUILDLOG}
+
+
+#### 4. BUILD AND INSTALL XENOCARA  
+##############################################
+# In this step we will build and install the
+# X windows. This will be installed in /usr/X11R6
+
+unset DESTDIR
+unset RELEASEDIR
+BUILDLOG=${BUILDLOGDIR}/logfile_4_build_xenocara
+echo -n 'Started: ' > ${BUILDLOG}
+date >> ${BUILDLOG}
+
+# Safely remove the contents of xobj in the background
+#rmdirsafe /usr/xobj
+rm -rf /usr/xobj/*
+
+# Build xenocara
+cd /usr/xenocara
+echo --make bootstrap-- $(date) >>${BUILDLOG}
+make bootstrap >>${BUILDLOG} 2>&1
+echo --make obj-- $(date) >>${BUILDLOG}
+make obj >>${BUILDLOG} 2>&1
+echo --make -j${CORES} build-- $(date) >>${BUILDLOG}
+make -j${CORES} build >>${BUILDLOG} 2>&1
+echo -n 'Finished: ' >>${BUILDLOG}
+date >>${BUILDLOG}
+
+
+#### 5. MAKE THE SYSTEM RELEASE AND VALIDATE 
+##############################################
+# In the last step we built xenocara (X.org) 
+# We now will build our release sets for X 
+# windows. These sets will be added with the 
+# system sets in the RELEASEDIR. 
+# xbase55.tgz xetc.tgz xfont55.tgz xserv55.tgz
+# xshare55.tgz. 
+ 
+BUILDLOG=${BUILDLOGDIR}/logfile_5_xenocara_release
+echo -n 'Started: ' > ${BUILDLOG}
+date >> ${BUILDLOG}
+
+rmdirsafe ${DESTDIR}
+mkdir -p ${DESTDIR} ${RELEASEDIR}
+cd /usr/xenocara # build inside /usr/xenocara
+echo --make release-- $(date) >>${BUILDLOG}
+make release >>${BUILDLOG} 2>&1
+
+# Construct the list of all SHA256 checksums
+cd ${RELEASEDIR}
+cat SHA256 >> SHA256_temp && mv SHA256_temp SHA256
+echo -n 'Finished: ' >>${BUILDLOG}
+date >>${BUILDLOG}
+
+
+#### 6. ORGANIZE TO RELEASE STRUCTURE
+##############################################
+# In this step the sets will be organized
+# into the same structure found on the images
+# CDs ie OpenBSD/5.6/amd64.
+
+VERSION=$(uname -r)
+
+# Make the directory structure
+test -d ${IMGROOT} && mv ${IMGROOT} ${IMGROOT}.previous
+mkdir -p ${IMGROOT}/${VERSION}
+mv ${RELEASEDIR} ${IMGROOT}/${VERSION}/${MACHINE}
+
+# Add the updated source code and the build logs, too
+cd ${IMGROOT}/${VERSION}
+tar zcf src_stable_errata.tar.gz /usr/src
+tar zcf xenocara_stable_errata.tar.gz /usr/xenocara
+tar zcf ports_stable.tar.gz /usr/ports
+tar zcf buildlogs.tar.gz ${BUILDLOGDIR}/
+cksum -a SHA256 *.gz > SHA256
+
+# Create a boot.conf file
+mkdir -p ${IMGROOT}/etc
+echo "set image /5.6/amd64/bsd.rd" > ${IMGROOT}/etc/boot.conf
+
+
+#### 7. SIGN ALL SETS USING OUR OWN KEY
+##############################################
+# We use OpenBSD signify to make a private key
+# if we don't have one. Then we will sign our 
+# sets so we later can verify they have not been
+# tampered with. If you have not already made a 
+# private key then uncomment the key generator.
+# The patched code is also signed and archived.
+
+KEYNAME=/etc/signify/rolled-stable-base
+
+# Create signing keys if none exist
+if [[ ! -f ${KEYNAME}.pub || ! -f ${KEYNAME}.sec ]]; then
+        signify -G -p /etc/signify/rolled-stable-base.pub -s /etc/signify/rolled-stable-base.sec
+fi
+
+cd ${IMGROOT}/${VERSION}/${MACHINE}
+signify -S -s /etc/signify/rolled-stable-base.sec -m SHA256 -e -x SHA256.sig
+ls -nT > index.txt
+cd ${IMGROOT}/${MACHINE}
+signify -S -s /etc/signify/rolled-stable-base.sec -m SHA256 -e -x SHA256.sig
+ls -nT > index.txt
+
+#### 8. ISO IMAGE THAT CAN BE BURNED TO DISK 
+##############################################
+# This will make an iso with the sets in the 
+# correct places for installing from disk. The image 
+# is a fully patched OS that is signed with your 
+# own key. Your patched source code is included 
+# and signed also. When new errata patches are
+# released just add them to your source repos.
+
+if [[ -x $(which mkisofs) ]]; then
+        mkisofs -r -no-emul-boot -b ${VERSION}/${MACHINE}/cdbr -c boot.catalog -o /tmp/install-full.iso ${IMGROOT}
+        cp /tmp/install-full.iso ${IMAGEROOT}
+fi
+
+
+# clean up.
+##############################################
+#rmlogsafe ${BUILDLOG}DIR
+umount ${BUILDLOGDIR}
+umount /usr/obj
