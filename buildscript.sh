@@ -204,8 +204,8 @@ mkdir -p ${DESTDIR} ${RELEASEDIR}
 
 # Build the sets
 cd /usr/src/etc 
-echo --make -j${CORES} release-- $(date) >>${BUILDLOG}
-make -j${CORES} release >>${BUILDLOG} 2>&1
+echo --make release-- $(date) >>${BUILDLOG}
+make release >>${BUILDLOG} 2>&1
 cd /usr/src/distrib/sets 
 echo --checkflist-- $(date) >>${BUILDLOG}
 sh checkflist >>${BUILDLOG} 2>&1
