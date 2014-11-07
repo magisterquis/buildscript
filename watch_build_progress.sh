@@ -39,5 +39,6 @@ while :; do
                 head -n1 $i | tr -d "\n"; echo
 		tail -n1 $i | tr -d "\n"; echo
 	done
+        date # Keep track of current time, too
 	sleep 10
 done
