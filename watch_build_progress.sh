@@ -36,9 +36,8 @@ while :; do
 	clear
 	for i in /var/log/buildlogs/*; do
 		ls -l $i
-		head -n1 $i
-		tail -n1 $i | tr -d "\n"
-		echo
+                head -n1 $i | tr -d "\n"; echo
+		tail -n1 $i | tr -d "\n"; echo
 	done
 	sleep 10
 done
