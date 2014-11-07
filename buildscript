@@ -125,7 +125,7 @@ function rmdirsafe {
 if [[ -z $1 || $1 != "-r" ]]; then # Separate out the non-post-reboot code
 
         BUILDLOG=${BUILDLOGDIR}/logfile_1_build_kernel
-        echo -n 'Started: ' > ${BUILDLOG}
+        echo -n ' Started: ' > ${BUILDLOG}
         date >> ${BUILDLOG}
 
         # Build the new kernel
@@ -164,7 +164,7 @@ mv /var/log/logfile_1_build_kernel ${BUILDLOGDIR}
 # built system from this step. 
 
 BUILDLOG=${BUILDLOGDIR}/logfile_2_build_system
-echo -n 'Started: ' > ${BUILDLOG}
+echo -n ' Started: ' > ${BUILDLOG}
 date >> ${BUILDLOG}
 
 # Remove old object files
@@ -195,7 +195,7 @@ date >>${BUILDLOG}
 export DESTDIR=/root/dest
 export RELEASEDIR=/root/rel
 BUILDLOG=${BUILDLOGDIR}/logfile_3_sys_release
-echo -n 'Started: ' > ${BUILDLOG}
+echo -n ' Started: ' > ${BUILDLOG}
 date >> ${BUILDLOG}
 
 # Safely remove old $DESTDIR in the background, and make working directories
@@ -223,7 +223,7 @@ date >>${BUILDLOG}
 unset DESTDIR
 unset RELEASEDIR
 BUILDLOG=${BUILDLOGDIR}/logfile_4_build_xenocara
-echo -n 'Started: ' > ${BUILDLOG}
+echo -n ' Started: ' > ${BUILDLOG}
 date >> ${BUILDLOG}
 
 # Safely remove the contents of xobj in the background
@@ -252,7 +252,7 @@ date >>${BUILDLOG}
 # xshare55.tgz. 
  
 BUILDLOG=${BUILDLOGDIR}/logfile_5_xenocara_release
-echo -n 'Started: ' > ${BUILDLOG}
+echo -n ' Started: ' > ${BUILDLOG}
 date >> ${BUILDLOG}
 
 rmdirsafe ${DESTDIR}
