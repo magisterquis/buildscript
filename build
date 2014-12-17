@@ -1,0 +1,205 @@
+#!/bin/ksh
+# 
+# build
+# Builds an OpenBSD release
+# by J. Stuart McMurray
+# Created 20141214
+# Last modified 2014121k
+# 
+# Copyright (c) 2014 J. Stuart McMurray <kd5pbo@gmail.com>
+# 
+# Permission to use, copy, modify, and distribute this software for any
+# purpose with or without fee is hereby granted, provided that the above
+# copyright notice and this permission notice appear in all copies.
+# 
+# THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+# WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+# MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+# ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+# WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+# ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+# OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+# 
+set -e
+# Assumptions:
+# 1. There is a user named cvsync who updates /home/cvsync/cvs.  Please see the
+# included cvsync.conf.
+# 2. The version to build is the same as $(uname -r), or VERSION has been set.
+# 3. The architecture to build is the same as $(uname -m).
+# 4. This script is being run as root.
+# 
+# All output will be sent to /var/log/build.log.
+
+export PATH=/root/bin:/bin:/sbin:/usr/bin:/usr/sbin:/usr/X11R6/bin:/usr/local/bin:/usr/local/sbin:/usr/games:.:/root/bin
+
+# Make sure we're root
+if [[ $(id -u) -ne 0 ]]; then
+        echo "Not running as root.  Please run as root."
+        exit -1
+fi
+
+
+#
+# Build the kernel 
+#
+if [[ -z $1 ]]; then
+        # Back up old logfile
+        [[ -f /var/log/build.log ]] && mv /var/log/build.log \
+                /var/log/build.log.bak
+        # Set output to a logfile
+        exec >/var/log/build.log
+        exec 2>/var/log/build.log
+
+        echo -n "Start time: "
+        date
+
+        echo --Removing old directories
+        cd /usr
+        for i in dest rel mdec src xenocara xobj obj; do
+                # Unmount it if it's tmpfs
+                if mount | grep /usr/$i | grep tmpfs; then
+                        echo --Unmounting /usr/$i
+                        umount /usr/$i
+                fi
+                # Make sure it exists
+                if [[ -d $i ]]; then
+                        echo ----Making new /usr/$i
+                        mv $i $i.old
+                        rm -rf $i.old &
+                else
+                        echo ----Making $i
+                fi
+                mkdir $i
+        done
+
+        echo --Updating source repository
+        sudo -u cvsync cvsync -v
+
+        echo --Checking out source
+        cd /usr
+        time cvs -d/home/cvsync/cvs -Q checkout \
+                -r OPENBSD_${VERSION:-$(uname -r | tr "." "_")} -P src xenocara
+
+        echo --Mounting tmpfs on /usr/obj
+        if ! mount | grep 'tmpfs on /usr/obj' >/dev/null; then
+                mount -t tmpfs tmpfs /usr/obj
+                mount
+        fi
+
+        echo --Configuring kernel
+        cd /usr/src/sys/arch/$(uname -m)/conf
+        if [[ $(sysctl hw.ncpu | cut -f 2 -d '=') -eq 1 ]]; then
+                config GENERIC
+                cd ../compile/GENERIC
+        else
+                config GENERIC.MP
+                cd ../compile/GENERIC.MP
+        fi
+
+
+        echo --Building kenrel
+        make clean && time make
+
+        echo --Installing kernel
+        make install
+
+        echo --Rebooting
+        echo -n 'End time: '
+        date
+        echo "$(readlink -f $0) 1 >>/var/log/build.log 2>>/root/nohup.out &" \
+                >> /etc/rc.firsttime
+        shutdown -r now
+fi
+
+
+#
+# Build the userland
+#
+
+
+echo --Mounting tmpfs directories
+cd /usr
+for d in xobj dest mdec xobj obj rel; do
+	if ! mount | grep "tmpfs on /usr/$d" >/dev/null; then
+		echo ----Mounting tmpfs on /usr/$d
+		mount -t tmpfs tmpfs /usr/$d
+	fi
+done
+
+
+echo -- Preparing to build userland
+rm -rf /usr/obj/*
+cd /usr/src
+echo ----Making object files
+make obj
+echo ----Making distrib-dirs
+cd /usr/src/etc && env DESTDIR=/ make distrib-dirs
+cd /usr/src
+
+echo --Making userland
+time make build
+
+echo --Making release directories
+export DESTDIR=/usr/dest
+export RELEASEDIR=/usr/rel
+test -d ${DESTDIR} && mv ${DESTDIR} ${DESTDIR}.old && rm -rf ${DESTDIR}.old &
+mkdir -p ${DESTDIR} ${RELEASEDIR}
+
+echo --Making release
+cd /usr/src/etc
+time make release
+
+echo --Checking flist
+cd /usr/src/distrib/sets
+sh checkflist
+
+echo --Tarring up release
+mv /usr/rel/SHA256 /usr/rel/SHA256.nox
+cd /usr/rel
+[[ -f /usr/rel.tar ]] && mv /usr/rel.tar /usr/rel.tar.bak
+time tar -cvf /usr/rel.tar ./rel
+
+echo --Remounting /usr/rel
+cd /
+umount /usr/rel
+mount -t tmpfs tmpfs /usr/rel
+
+echo --Preparing to build xenocara
+cd /usr/xenocara
+
+echo --Make bootstrap
+make bootstrap
+
+echo --Make obj
+make obj
+
+echo --Make build
+make build
+
+echo --Preparing to make the release
+export DESTDIR=/usr/dest
+export RELEASEDIR=/usr/rel
+test -d ${DESTDIR} && mv ${DESTDIR} ${DESTDIR}- && \
+mkdir -p ${DESTDIR} ${RELEASEDIR}
+
+echo --Make release
+time make release
+
+echo --Adding xenocara release to the release tarball
+cd /usr
+mv /usr/rel/SHA256 /usr/rel/SHA256.x
+time tar -rvf /usr/rel.tar ./rel
+
+echo --Compressing release
+cd /usr
+time gzip rel.tar
+
+echo --Unmounting tmpfs mounts
+cd /
+for i in $(mount | grep tmpfs | cut -d ' ' -f 3); do 
+	if umount $i; then
+		echo ----$i;
+	fi
+done
+
+echo --All done.
